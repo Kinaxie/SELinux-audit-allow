@@ -19,10 +19,15 @@ def merge_permissions(existing_perms, new_perms):
     new_perm_set = set(new_perms.split())
     return ' '.join(sorted(existing_perm_set.union(new_perm_set)))
 
+MAGISK_CONTEXTS = {'magisk', 'magisk_file', 'magisk_daemon', 'magisk_client'}
+VALID_CLASSES = {'file', 'dir', 'socket', 'lnk_file', 'chr_file', 'blk_file', 'fifo_file', 'service'}
+
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sepolicy_rule = os.path.join(script_dir, 'sepolicy.rule')
 sepolicy_cil = os.path.join(script_dir, 'sepolicy.cil')
 rules = 0
+skipped = 0
+filtered = 0
 
 print("========SELinux audit allow========")
 
@@ -44,24 +49,27 @@ print(f"- 目标输出文件: {sepolicy_rule}, {sepolicy_cil}")
 
 def handle_target_file(target):
     if os.path.isfile(target) and os.path.getsize(target) > 0:
-        action = input(f"\n! 目标输出文件 {target} 已存在\n- 您希望继续写入此文件吗?\n- 输入 y 或 yes 将会继续写入此文件\n- 输入 n 或 no 将会清空此文件: ")
+        action = input(f"\n! 目标输出文件 {target} 已存在\n- 您希望如何处理此文件?\n"
+                      f"- 输入 y 或 yes 将续写此文件并跳过重复条目\n"
+                      f"- 输入 n 或 no 将清空此文件并重新生成: ")
         if action.lower() in ["y", "yes"]:
-            print(f"- 继续写入 {target}")
+            print(f"- 将续写 {target} 并跳过重复条目")
             with open(target, 'r', encoding='utf-8') as f:
-                return re.sub(r"[{}()]", "", f.read()).replace('allow ', '')
+                content = re.sub(r"[{}()]", "", f.read()).replace('allow ', '')
+            return set(content.splitlines())
         elif action.lower() in ["n", "no"]:
             print(f"- 清空 {target}")
             open(target, 'w').close()
-            return ""
+            return set()
     else:
         open(target, 'w').close()
-        return ""
-
-rule_list = ""
-for target in [sepolicy_rule, sepolicy_cil]:
-    rule_list += handle_target_file(target)
+        return set()
 
 start_time = time.time()
+
+existing_rules = set()
+for target in [sepolicy_rule, sepolicy_cil]:
+    existing_rules.update(handle_target_file(target))
 
 with open(file, 'r', encoding='utf-8') as f:
     log = [line for line in f if "avc:  denied" in line and "untrusted_app" not in line]
@@ -72,7 +80,6 @@ if not log:
 
 rules_text_rule = ""
 rules_text_cil = ""
-
 rules_dict = {}
 
 for error in log:
@@ -85,6 +92,20 @@ for error in log:
 
     if not scontext or not tcontext or not tclass or not perms:
         continue
+        
+    if (scontext in MAGISK_CONTEXTS or tcontext in MAGISK_CONTEXTS or
+        'magisk' in scontext or 'magisk' in tcontext):
+        filtered += 1
+        continue
+
+    if tclass not in VALID_CLASSES:
+        filtered += 1
+        continue
+
+    rule_key = f"{scontext} {tcontext} {tclass} {perms}"
+    if rule_key in existing_rules:
+        skipped += 1
+        continue
 
     if all_config in rules_dict:
         existing_perms = rules_dict[all_config]
@@ -93,11 +114,14 @@ for error in log:
     else:
         rules_dict[all_config] = perms
 
-for all_config, perms in rules_dict.items():
+for all_config, perms EQUAL in rules_dict.items():
     scontext, tcontext, tclass = all_config.split(' ', 2)
-    rules_text_rule += f"allow {scontext} {tcontext} {tclass} {{ {perms} }}\n"
-    rules_text_cil += f"(allow {scontext} {tcontext} ({tclass} ({perms})))\n"
-    rules += 1
+    rule_line = f"{scontext} {tcontext} {tclass} {perms}"
+    if rule_line not in existing_rules:
+        rules_text_rule += f"allow {scontext} {tcontext} {tclass} {{ {perms} }}\n"
+        rules_text_cil += f"(allow {scontext} {tcontext} ({tclass} ({perms})))\n"
+        rules += 1
+        existing_rules.add(rule_line)
 
 with open(sepolicy_rule, 'a', encoding='utf-8') as f:
     f.write(rules_text_rule)
@@ -111,5 +135,5 @@ remove_empty_lines(sepolicy_cil)
 end_time = time.time()
 elapsed_time = end_time - start_time
 
-print(f"- 规则生成完成，共生成 {rules} 条规则，耗时 {elapsed_time:.2f} 秒")
+print(f"- 规则生成完成，共生成 {rules} 条新规则，跳过 {skipped} 条重复规则，过滤 {filtered} 条无效规则，耗时 {elapsed_time:.2f} 秒")
 exit(0)

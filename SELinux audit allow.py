@@ -36,7 +36,6 @@ while not file:
     input_file = input("- 请输入目标日志文件: ")
     if input_file == "exit":
         exit()
-
     if os.path.isfile(os.path.join(script_dir, input_file)):
         file = os.path.join(script_dir, input_file)
     elif os.path.isfile(input_file):
@@ -55,8 +54,9 @@ def handle_target_file(target):
         if action.lower() in ["y", "yes"]:
             print(f"- 将续写 {target} 并跳过重复条目")
             with open(target, 'r', encoding='utf-8') as f:
-                content = re.sub(r"[{}()]", "", f.read()).replace('allow ', '')
-            return set(content.splitlines())
+                # 提取规则的纯文本形式用于去重
+                content = re.sub(r"[{}()]", "", f.read()).replace('allow ', '').strip()
+            return set(line.strip() for line in content.splitlines() if line.strip())
         elif action.lower() in ["n", "no"]:
             print(f"- 清空 {target}")
             open(target, 'w').close()
@@ -92,9 +92,9 @@ for error in log:
 
     if not scontext or not tcontext or not tclass or not perms:
         continue
-        
-    if (scontext in MAGISK_CONTEXTS or tcontext in MAGISK_CONTEXTS or
-        'magisk' in scontext or 'magisk' in tcontext):
+
+    if ('magisk' in scontext.lower() or 'magisk' in tcontext.lower() or
+        scontext in MAGISK_CONTEXTS or tcontext in MAGISK_CONTEXTS):
         filtered += 1
         continue
 
@@ -109,16 +109,15 @@ for error in log:
 
     if all_config in rules_dict:
         existing_perms = rules_dict[all_config]
-        merged_perms = merge_permissions(existing_perms, perms)
-        rules_dict[all_config] = merged_perms
+        rules_dict[all_config] = merge_permissions(existing_perms, perms)
     else:
         rules_dict[all_config] = perms
 
-for all_config, perms EQUAL in rules_dict.items():
+for all_config, perms in rules_dict.items():
     scontext, tcontext, tclass = all_config.split(' ', 2)
     rule_line = f"{scontext} {tcontext} {tclass} {perms}"
     if rule_line not in existing_rules:
-        rules_text_rule += f"allow {scontext} {tcontext} {tclass} {{ {perms} }}\n"
+        rules_text_rule += f"allow {scontext} {tcontext}:{tclass} {{ {perms} }}\n" 
         rules_text_cil += f"(allow {scontext} {tcontext} ({tclass} ({perms})))\n"
         rules += 1
         existing_rules.add(rule_line)

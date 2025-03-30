@@ -54,7 +54,6 @@ def handle_target_file(target):
         if action.lower() in ["y", "yes"]:
             print(f"- 将续写 {target} 并跳过重复条目")
             with open(target, 'r', encoding='utf-8') as f:
-                # 提取规则的纯文本形式用于去重
                 content = re.sub(r"[{}()]", "", f.read()).replace('allow ', '').strip()
             return set(line.strip() for line in content.splitlines() if line.strip())
         elif action.lower() in ["n", "no"]:

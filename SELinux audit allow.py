@@ -5,7 +5,10 @@ import time
 def extract_field(error, keyword):
     match = re.search(f"{keyword}=([^\s]+)", error)
     if match:
-        return match.group(1).replace('u:r:', '').replace('u:object_r:', '').replace(':s0', '')
+        value = match.group(1)
+        value = value.replace('u:r:', '').replace('u:object_r:', '')
+        value = re.sub(r':c\d+(,c\d+)*|:s\d+', '', value)
+        return value
     return None
 
 def remove_empty_lines(file_path):
@@ -20,7 +23,10 @@ def merge_permissions(existing_perms, new_perms):
     return ' '.join(sorted(existing_perm_set.union(new_perm_set)))
 
 MAGISK_CONTEXTS = {'magisk', 'magisk_file', 'magisk_daemon', 'magisk_client'}
-VALID_CLASSES = {'file', 'dir', 'socket', 'lnk_file', 'chr_file', 'blk_file', 'fifo_file', 'service'}
+VALID_CLASSES = {
+    'file', 'dir', 'socket', 'lnk_file', 'chr_file', 'blk_file', 'fifo_file', 
+    'service', 'property_service', 'service_manager', 'capability'
+}
 
 script_dir = os.path.dirname(os.path.abspath(__file__))
 sepolicy_rule = os.path.join(script_dir, 'sepolicy.rule')
@@ -71,7 +77,7 @@ for target in [sepolicy_rule, sepolicy_cil]:
     existing_rules.update(handle_target_file(target))
 
 with open(file, 'r', encoding='utf-8') as f:
-    log = [line for line in f if "avc:  denied" in line and "untrusted_app" not in line]
+    log = [line for line in f if "avc:  denied" in line]
 
 if not log:
     print("! 读取日志文件失败")
@@ -83,11 +89,12 @@ rules_dict = {}
 
 for error in log:
     scontext = extract_field(error, "scontext")
-    tcontext = extract_field(error, "tcontext")
+    tcontext_raw = extract_field(error, "tcontext")
     tclass = extract_field(error, "tclass")
     perms_match = re.search(r"{([^}]+)}", error)
     perms = perms_match.group(1).strip() if perms_match else ""
-    all_config = f"{scontext} {tcontext} {tclass}"
+
+    tcontext = "self" if tcontext_raw == scontext else tcontext_raw
 
     if not scontext or not tcontext or not tclass or not perms:
         continue
@@ -106,6 +113,7 @@ for error in log:
         skipped += 1
         continue
 
+    all_config = f"{scontext} {tcontext} {tclass}"
     if all_config in rules_dict:
         existing_perms = rules_dict[all_config]
         rules_dict[all_config] = merge_permissions(existing_perms, perms)
@@ -116,8 +124,9 @@ for all_config, perms in rules_dict.items():
     scontext, tcontext, tclass = all_config.split(' ', 2)
     rule_line = f"{scontext} {tcontext} {tclass} {perms}"
     if rule_line not in existing_rules:
-        rules_text_rule += f"allow {scontext} {tcontext}:{tclass} {{ {perms} }}\n" 
-        rules_text_cil += f"(allow {scontext} {tcontext} ({tclass} ({perms})))\n"
+        rules_text_rule += f"allow {scontext} {tcontext}:{tclass} {{ {perms} }}\n"
+        perms_split = ' '.join(f"({p})" for p in perms.split())
+        rules_text_cil += f"(allow {scontext} {tcontext} ({tclass} ({perms_split})))\n"
         rules += 1
         existing_rules.add(rule_line)
 

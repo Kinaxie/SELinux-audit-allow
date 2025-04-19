@@ -3,7 +3,7 @@ import re
 import time
 
 def extract_field(error, keyword):
-    match = re.search(f"{keyword}=([^\s]+)", error)
+    match = re.search(rf"{keyword}=([^\s]+)", error)
     if match:
         value = match.group(1)
         value = value.replace('u:r:', '').replace('u:object_r:', '')
